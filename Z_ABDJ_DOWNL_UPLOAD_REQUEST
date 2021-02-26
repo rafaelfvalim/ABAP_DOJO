@@ -1,0 +1,249 @@
+*&---------------------------------------------------------------------*
+*& Report  Z_ABDJ_DOWNL_UPLOAD_REQUEST
+*&---------------------------------------------------------------------*
+*& Autor:     Rafeal Valim - ABAP DOJO https://t.me/abap_dojo
+*&                                     https://abapdojo.dev.br/
+*& Descrição: Upload e Download de arquivos DATA e COF da request
+*&            Utilize para transporte fora do landscape ou sistemas
+*&            que não possuem rota STMS
+*& Atenção:   Consulte a politica de TR da sua empresa!!!
+*&---------------------------------------------------------------------*
+report z_abdj_downl_upload_request.
+*&---------------------------------------------------------------------*
+*& Variáveis globais
+*&---------------------------------------------------------------------*
+type-pools sabc.
+
+data gv_path type rlgrap-filename.
+data gv_path_cofile type rlgrap-filename.
+data gv_path_data type rlgrap-filename.
+data gv_path_bin type rlgrap-filename.
+
+data gv_file_k type rlgrap-filename.
+data gv_file_r type rlgrap-filename.
+data gv_file_d type rlgrap-filename.
+
+data gv_separator type c.
+*&---------------------------------------------------------------------*
+*& Tela de seleção
+*&---------------------------------------------------------------------*
+parameters: p_trkorr type e070-trkorr obligatory,
+            p_path   type rlgrap-filename obligatory default 'C:\temp\'.
+selection-screen skip.
+parameters: p_down radiobutton group func default 'X',
+            p_up   radiobutton group func.
+
+"Local Path
+at selection-screen.
+  perform f_check_path.
+
+start-of-selection.
+  "Diretório base de transporte
+  call 'C_SAPGPARAM' id 'NAME' field 'DIR_TRANS' id 'VALUE' field gv_path.
+  "Tipo do separador do arquivo
+  if sy-opsys = 'Windows NT'.
+    gv_separator = '\'.
+  else.
+    gv_separator = '/'.
+  endif.
+
+  "Diretórios de transporte
+  concatenate gv_path gv_separator 'cofiles' gv_separator
+  into gv_path_cofile.
+
+  concatenate gv_path gv_separator 'data' gv_separator
+  into gv_path_data.
+
+  concatenate gv_path gv_separator 'data' gv_separator
+  into gv_path_bin.
+
+  write / 'Download dos diretórios:'(t01).
+  write / gv_path_cofile.
+  write / gv_path_data.
+  write / gv_path_bin.
+  skip.
+
+  "Nome dos arquivos
+  concatenate p_trkorr+3(7) p_trkorr+0(3)
+  into gv_file_k
+  separated by '.'.
+
+  concatenate 'R' p_trkorr+4(6) '.' p_trkorr+0(3)
+  into gv_file_r.
+
+  concatenate 'D' p_trkorr+4(6) '.' p_trkorr+0(3)
+  into gv_file_d.
+
+  "Upload ou Download
+  if p_down = 'X'.
+    perform f_download using gv_path_cofile
+                             p_path
+                             gv_file_k.
+    perform f_download using gv_path_data
+                             p_path
+                             gv_file_r.
+    perform f_download using gv_path_data
+                             p_path
+                             gv_file_d.
+  else.
+    perform f_upload using p_path
+                           gv_path_cofile
+                           gv_file_k.
+    perform f_upload using p_path
+                           gv_path_data
+                           gv_file_r.
+    perform f_upload using p_path
+                           gv_path_data
+                           gv_file_d.
+  endif.
+
+*&---------------------------------------------------------------------*
+*&      Form  F_DOWNLOAD
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_GV_PATH_DATA  text
+*      -->P_P_PATH  text
+*      -->P_GV_FILE_R  text
+*----------------------------------------------------------------------*
+form f_download using value(p_srcpath) type rlgrap-filename
+                      value(p_dstpath) type rlgrap-filename
+                      value(p_file) type rlgrap-filename.
+
+  types begin of lst_buffer.
+  types data type x length 1024.
+  types end of lst_buffer.
+
+  data lt_buffer type table of lst_buffer.
+  data ls_buffer type lst_buffer.
+  data lv_filename type rlgrap-filename.
+  data lv_reclen type i.
+  data lv_filelen type i.
+
+  "Leitura do arquivo de entrada
+  concatenate p_srcpath p_file into lv_filename.
+
+  open dataset lv_filename for input in binary mode.
+
+  check sy-subrc = 0.
+
+  do.
+    read dataset lv_filename into ls_buffer length lv_reclen.
+    if lv_reclen = 0.
+      exit.
+    endif.
+
+    lv_filelen = lv_filelen + lv_reclen.
+    append ls_buffer to lt_buffer.
+  enddo.
+
+  close dataset lv_filename.
+
+  "Download do arquivo
+  concatenate p_dstpath p_file into lv_filename.
+
+  call function 'WS_DOWNLOAD'
+    exporting
+      bin_filesize = lv_filelen
+      filename     = lv_filename
+      filetype     = 'BIN'
+    tables
+      data_tab     = lt_buffer
+    exceptions
+      others       = 1.
+
+  check sy-subrc = 0.
+
+  write / 'Downloaded:'(t02).
+  write (150) p_file.
+endform. "f_download
+*&---------------------------------------------------------------------*
+*&      Form  F_UPLOAD
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P_P_PATH  text
+*      -->P_GV_PATH_COFILE  text
+*      -->P_GV_FILE_K  text
+*----------------------------------------------------------------------*
+form f_upload using value(p_srcpath) type rlgrap-filename
+                    value(p_dstpath) type rlgrap-filename
+                    value(p_file) type rlgrap-filename.
+
+  types begin of lst_buffer.
+  types data type x length 1024.
+  types end of lst_buffer.
+
+  data lt_buffer type table of lst_buffer.
+  data ls_buffer type lst_buffer.
+  data lv_filename type rlgrap-filename.
+  data lv_reclen type i.
+  data lv_filelen type i.
+  data lv_result type c.
+
+  "Verifica se o arquivo existe
+  concatenate p_srcpath p_file into lv_filename.
+  call function 'WS_QUERY'
+    exporting
+      filename = lv_filename
+      query    = 'FE'
+    importing
+      return   = lv_result
+    exceptions
+      others   = 1.
+
+  check sy-subrc = 0 and lv_result = '1'.
+  "Upload do arquivo
+  call function 'WS_UPLOAD'
+    exporting
+      filename   = lv_filename
+      filetype   = 'BIN'
+    importing
+      filelength = lv_filelen
+    tables
+      data_tab   = lt_buffer
+    exceptions
+      others     = 1.
+
+  "Escrever arquivo no servidor
+  concatenate p_dstpath p_file into lv_filename.
+
+  open dataset lv_filename for output in binary mode.
+  check sy-subrc = 0.
+
+  loop at lt_buffer into ls_buffer.
+    describe field ls_buffer-data
+    length lv_reclen in byte mode.
+    if lv_filelen > lv_reclen.
+      lv_filelen = lv_filelen - lv_reclen.
+    else.
+      lv_reclen = lv_filelen.
+    endif.
+
+    transfer ls_buffer to lv_filename length lv_reclen.
+  endloop.
+
+  close dataset lv_filename.
+
+  write / 'Uploaded:'(t03).
+  write (150) p_file.
+endform. "f_upload
+*&---------------------------------------------------------------------*
+*&      Form  F_CHECK_PATH
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+form f_check_path .
+  data lv_pos type i.
+  data lv_temp type c.
+
+  lv_pos = strlen( p_path ) - 1.
+  lv_temp = p_path+lv_pos(1).
+
+  check not lv_temp = '\'.
+
+  concatenate p_path '\' into p_path.
+endform. " f_check_path
